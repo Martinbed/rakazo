@@ -723,7 +723,11 @@ describe("threadSnapshot", () => {
         where: expect.objectContaining({
           botId: "bot-1",
           threadId: "thread-1",
-          trigger: { notIn: ["bot_message", "tickets"] },
+          // "bot_message" is not excluded here: this query is scoped to one
+          // bot and its own thread, so a bot_message run here is this bot's
+          // own delegated work, not a peer's. Background ticket runs stay
+          // out.
+          trigger: { notIn: ["tickets"] },
           status: {
             in: ["queued", "leased", "running", "waiting_input", "waiting_takeover", "failed"],
           },
@@ -738,6 +742,58 @@ describe("threadSnapshot", () => {
       }),
     );
     expect(findManyEvents).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a bot's own delegated run in that bot's own thread", async () => {
+    // A run started by another bot's message_bot call, in the thread of the
+    // bot that was asked to do the work. It is not a peer run: a bot has one
+    // thread, and this query is scoped to that bot and that thread. Hiding it
+    // left the bot looking idle in its own chat and took away the Stop
+    // control, which is drawn from this run.
+    const delegated = {
+      id: "run-delegated",
+      botId: "bot-1",
+      threadId: "thread-1",
+      taskId: "task-delegated",
+      status: "running",
+      trigger: "bot_message",
+      modelProvider: null,
+      modelId: null,
+      error: null,
+      startedAt: new Date("2026-08-23T00:00:02.000Z"),
+      completedAt: null,
+      createdAt: new Date("2026-08-23T00:00:02.000Z"),
+    };
+    const snapshot = await threadSnapshot(
+      {
+        prisma: {
+          $transaction: vi.fn(async (callback: (client: unknown) => unknown) =>
+            callback({
+              $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+              message: { findMany: vi.fn().mockResolvedValue([]) },
+              event: {
+                findFirst: vi.fn().mockResolvedValue(null),
+                findMany: vi.fn().mockResolvedValue([]),
+              },
+              run: {
+                findFirst: botRunFindFirst([delegated]),
+                findMany: groupRunFindMany({ active: [delegated] }),
+              },
+            }),
+          ),
+        } as unknown as PrismaClient,
+      },
+      {
+        kind: "bot",
+        botId: "bot-1",
+        threadId: "thread-1",
+        bot: { computer: null },
+      } as ThreadTarget,
+    );
+
+    expect(snapshot.run).toEqual(
+      expect.objectContaining({ id: "run-delegated", status: "running" }),
+    );
   });
 
   it("prefers a concurrent user run over a waiting peer ask", async () => {

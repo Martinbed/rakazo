@@ -365,9 +365,15 @@ export async function threadSnapshot(
                 // it made the bot look idle in its own chat while it was
                 // busy, and the Stop control is drawn from this run -- so the
                 // one run you could not cancel was the one the filter hid.
-                // Background ticket work stays out; it keeps working
-                // silently and must not make the avatar spin.
-                trigger: { notIn: [...BACKGROUND_RUN_TRIGGERS] },
+                //
+                // Background ticket work stays out unless it is waiting: it
+                // keeps working silently and must not make the avatar spin,
+                // but a ticket run that has asked the human a question has to
+                // be answerable.
+                OR: [
+                  { trigger: { notIn: [...BACKGROUND_RUN_TRIGGERS] } },
+                  { status: { in: ["waiting_input", "waiting_takeover"] } },
+                ],
               },
               orderBy: [{ createdAt: "desc" }, { id: "desc" }],
             }),
