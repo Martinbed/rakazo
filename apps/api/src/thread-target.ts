@@ -33,6 +33,7 @@ import {
   expireComputerExecutionLeases,
   IsolationError,
   lockOwnedGroup,
+  pickActiveStatus,
   touchGroupUpdatedAt,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -304,7 +305,7 @@ export async function resolveThreadTarget(
       botId: member.bot.id,
       name: member.bot.name,
       color: member.bot.color,
-      status: member.bot.runs[0]?.status ?? "idle",
+      status: pickActiveStatus(member.bot.runs),
     }));
     return {
       kind: "group",

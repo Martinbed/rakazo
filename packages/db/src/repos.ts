@@ -14,7 +14,12 @@ import { ensureComputerRecord, parseComputerMode } from "./computers.js";
 import { createThreadMessageInTransaction } from "./messages.js";
 import { BotSectionNameConflictError, IsolationError } from "./scope.js";
 import { lockSpaceForContentCreation } from "./spaces.js";
-import { activeRunSelection, latestBotRunSelection, previewFromBlocks } from "./thread-listing.js";
+import {
+  activeRunSelection,
+  latestBotRunSelection,
+  pickActiveStatus,
+  previewFromBlocks,
+} from "./thread-listing.js";
 import { withTransactionRetry } from "./transaction-retry.js";
 
 /** Newest messages loaded for sidebar preview; enough to skip a short peer-run tail. */
@@ -204,7 +209,7 @@ export function createRepos(
         unread: bot.thread.unread,
         parentBotId: bot.parentBotId,
         preview: previewFromBlocks(bot.thread.messages[0]?.blocks),
-        status: bot.runs[0]?.status ?? "idle",
+        status: pickActiveStatus(bot.runs),
         runErrorId: rosterRunErrorId(bot.thread.runs[0], bot.runs[0]),
         updatedAt: rosterUpdatedAt(bot.thread.messages[0], bot.updatedAt).toISOString(),
       };
@@ -452,7 +457,7 @@ export function createRepos(
           return mapBot(
             bot,
             preview,
-            bot.runs[0]?.status ?? "idle",
+            pickActiveStatus(bot.runs),
             rosterRunErrorId(bot.thread?.runs[0], bot.runs[0]),
             updatedAt,
             ringingCall(
