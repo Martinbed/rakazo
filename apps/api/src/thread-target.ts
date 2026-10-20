@@ -358,10 +358,16 @@ export async function threadSnapshot(
                 botId: target.botId,
                 threadId: target.threadId,
                 status: { in: [...ACTIVE_RUN_STATUSES] },
-                OR: [
-                  { trigger: { notIn: ["bot_message", ...BACKGROUND_RUN_TRIGGERS] } },
-                  { status: { in: ["waiting_input", "waiting_takeover"] } },
-                ],
+                // No "bot_message" exclusion here. This query is already
+                // scoped to one bot and that bot's own thread, so a
+                // bot_message run it finds is not a peer: it is this bot
+                // working on something another bot delegated to it. Excluding
+                // it made the bot look idle in its own chat while it was
+                // busy, and the Stop control is drawn from this run -- so the
+                // one run you could not cancel was the one the filter hid.
+                // Background ticket work stays out; it keeps working
+                // silently and must not make the avatar spin.
+                trigger: { notIn: [...BACKGROUND_RUN_TRIGGERS] },
               },
               orderBy: [{ createdAt: "desc" }, { id: "desc" }],
             }),
@@ -369,8 +375,10 @@ export async function threadSnapshot(
               where: {
                 botId: target.botId,
                 threadId: target.threadId,
-                // Hide peer bot_message and background ticket busy/failed noise; waiting is handled above.
-                trigger: { notIn: ["bot_message", ...BACKGROUND_RUN_TRIGGERS] },
+                // As above: scoped to this bot and its own thread, so a
+                // bot_message run here is its own delegated work rather than
+                // peer noise. Background ticket runs stay out.
+                trigger: { notIn: [...BACKGROUND_RUN_TRIGGERS] },
                 status: { in: [...ACTIVE_RUN_STATUSES, "failed"] },
               },
               // The id tiebreak keeps ordering deterministic under equal
@@ -533,6 +541,10 @@ function pickPrimaryPrivateActiveRun<T extends { status: string }>(
 ): T | undefined {
   return (
     runs.find((run) => run.status === "waiting_takeover") ??
+    // A turn that is running outranks one that is merely queued. Both are
+    // queue-holding, so the previous ordering took whichever came first,
+    // and a run queued behind a live turn took the thread from it.
+    runs.find((run) => run.status === "running") ??
     runs.find((run) => QUEUE_HOLDING_RUN_STATUSES.some((status) => status === run.status)) ??
     runs[0]
   );
