@@ -90,11 +90,40 @@ function responseForGlobalRealm(input: object): Response {
  * here so a captured builtin is not handed the package Agent. */
 const nodeFetch = globalThis.fetch;
 
+/** True when the failure is an undici handler-protocol version mismatch.
+ *
+ * A dispatcher built by this package's undici carries the current handler shape
+ * (`onRequestStart`). Node's built-in fetch bundles its own undici, which still
+ * expects the previous protocol, so a request that crosses that pair fails with
+ * `UND_ERR_INVALID_ARG` before a socket opens. */
+function isDispatcherVersionMismatch(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 8 && current && typeof current === "object"; depth++) {
+    const err = current as { code?: unknown; message?: unknown; cause?: unknown };
+    if (
+      err.code === "UND_ERR_INVALID_ARG" &&
+      typeof err.message === "string" &&
+      err.message.includes("invalid onRequestStart method")
+    ) {
+      return true;
+    }
+    current = err.cause;
+  }
+  return false;
+}
+
 /** Package fetch for an `Agent` from this undici.
  *
  * A missing transport, the fetch currently installed as `globalThis.fetch`,
- * and a captured builtin all use `dispatcherFetch`. Any other function is
- * the caller's transport and is returned unchanged. */
+ * and a captured builtin all use `dispatcherFetch`.
+ *
+ * Any other function is the caller's transport and stays in charge, because
+ * callers inject a fetch for tests and emulators. A caller that merely wraps
+ * the global fetch cannot accept a package `Agent`, so its transport is kept
+ * for the first attempt and the request is retried on `dispatcherFetch` when
+ * the pair turns out to be incompatible. The mismatch is raised before any
+ * socket opens, so nothing is replayed and no response body is consumed twice.
+ * Host pinning via the `Agent` still applies to the retry. */
 export function fetchPairedWithDispatcher(
   baseFetch?: typeof globalThis.fetch,
 ): typeof globalThis.fetch {
@@ -106,7 +135,15 @@ export function fetchPairedWithDispatcher(
   ) {
     return dispatcherFetch;
   }
-  return baseFetch;
+  const callerFetch = baseFetch;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      return await callerFetch(input, init);
+    } catch (error) {
+      if (!isDispatcherVersionMismatch(error)) throw error;
+      return await dispatcherFetch(input, init);
+    }
+  }) as typeof globalThis.fetch;
 }
 
 /** Snapshot a global FormData body before this package's fetch sees it.
